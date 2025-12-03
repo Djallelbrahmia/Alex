@@ -13,3 +13,8 @@
 .env.backup
 .env.*
 !.env.example
+
+*.zip
+*.log
+*.lock
+__pycache__/

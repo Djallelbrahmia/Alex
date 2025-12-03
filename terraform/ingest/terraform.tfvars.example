@@ -1,0 +1,4 @@
+
+aws_region = "eu-west-3"
+
+sagemaker_endpoint_name = "alex-embedding-endpoint"
