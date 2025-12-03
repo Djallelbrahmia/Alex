@@ -1,0 +1,15 @@
+**/.venv*/
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfvars
+# Terraform lock file
+.terraform.lock.hcl
+
+# Terraform local directories
+.terraform/
+.env
+.envrc
+.env.backup
+.env.*
+!.env.example
