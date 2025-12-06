@@ -1,0 +1,10 @@
+
+aws_region = "eu-west-3"
+
+openai_api_key = "*"
+
+alex_api_endpoint = "*"
+
+alex_api_key = "*"
+
+scheduler_enabled = true

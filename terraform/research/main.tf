@@ -1,0 +1,253 @@
+terraform {
+  required_version = ">= 1.5"
+  
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+  
+
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+data "aws_caller_identity" "current" {}
+
+
+resource "aws_ecr_repository" "researcher" {
+  name                 = "alex-researcher"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true  # Allow deletion even with images
+  
+  image_scanning_configuration {
+    scan_on_push = false
+  }
+  
+
+}
+
+
+resource "aws_iam_role" "app_runner_role" {
+  name = "alex-app-runner-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "build.apprunner.amazonaws.com"
+        }
+      },
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "tasks.apprunner.amazonaws.com"
+        }
+      }
+    ]
+  })
+  
+
+}
+
+resource "aws_iam_role_policy_attachment" "app_runner_ecr_access" {
+  role       = aws_iam_role.app_runner_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
+}
+
+resource "aws_iam_role" "app_runner_instance_role" {
+  name = "alex-app-runner-instance-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "tasks.apprunner.amazonaws.com"
+        }
+      }
+    ]
+  })
+  
+
+}
+
+resource "aws_iam_role_policy" "app_runner_instance_bedrock_access" {
+  name = "alex-app-runner-instance-bedrock-policy"
+  role = aws_iam_role.app_runner_instance_role.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream",
+          "bedrock:ListFoundationModels"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_apprunner_service" "researcher" {
+  service_name = "alex-researcher"
+  
+  source_configuration {
+    auto_deployments_enabled = false
+    
+    authentication_configuration {
+      access_role_arn = aws_iam_role.app_runner_role.arn
+    }
+    
+    image_repository {
+      image_identifier      = "${aws_ecr_repository.researcher.repository_url}:latest"
+      image_configuration {
+        port = "8000"
+        runtime_environment_variables = {
+          OPENAI_API_KEY    = var.openai_api_key
+          ALEX_API_ENDPOINT = var.alex_api_endpoint
+          ALEX_API_KEY      = var.alex_api_key
+          AWS_REGION_NAME=var.aws_region
+          AWS_BEDROCK_MODEL=var.aws_bedrock_model
+        }
+      }
+      image_repository_type = "ECR"
+    }
+  }
+  
+  instance_configuration {
+    cpu    = "1 vCPU"
+    memory = "2 GB"
+    instance_role_arn = aws_iam_role.app_runner_instance_role.arn
+  }
+  
+
+}
+
+
+resource "aws_iam_role" "eventbridge_role" {
+  count = var.scheduler_enabled ? 1 : 0
+  name  = "alex-eventbridge-scheduler-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "scheduler.amazonaws.com"
+        }
+      }
+    ]
+  })
+  
+
+}
+
+# Lambda function for invoking researcher
+resource "aws_lambda_function" "scheduler_lambda" {
+  count         = var.scheduler_enabled ? 1 : 0
+  function_name = "alex-researcher-scheduler"
+  role          = aws_iam_role.lambda_scheduler_role[0].arn
+  
+  # Note: The deployment package will be created by the guide instructions
+  filename         = "${path.module}/../../backend/scheduler/lambda_function.zip"
+  source_code_hash = fileexists("${path.module}/../../backend/scheduler/lambda_function.zip") ? filebase64sha256("${path.module}/../../backend/scheduler/lambda_function.zip") : null
+  
+  handler     = "lambda_function.handler"
+  runtime     = "python3.12"
+  timeout     = 180  
+  memory_size = 256
+  
+  environment {
+    variables = {
+      APP_RUNNER_URL = aws_apprunner_service.researcher.service_url
+    }
+  }
+  
+
+}
+
+resource "aws_iam_role" "lambda_scheduler_role" {
+  count = var.scheduler_enabled ? 1 : 0
+  name  = "alex-scheduler-lambda-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+  
+
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_scheduler_basic" {
+  count      = var.scheduler_enabled ? 1 : 0
+  role       = aws_iam_role.lambda_scheduler_role[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# EventBridge schedule
+resource "aws_scheduler_schedule" "research_schedule" {
+  count = var.scheduler_enabled ? 1 : 0
+  name  = "alex-research-schedule"
+  
+  flexible_time_window {
+    mode = "OFF"
+  }
+  
+  schedule_expression = "rate(2 hours)"
+  
+  target {
+    arn      = aws_lambda_function.scheduler_lambda[0].arn
+    role_arn = aws_iam_role.eventbridge_role[0].arn
+  }
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  count         = var.scheduler_enabled ? 1 : 0
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.scheduler_lambda[0].function_name
+  principal     = "scheduler.amazonaws.com"
+  source_arn    = aws_scheduler_schedule.research_schedule[0].arn
+}
+
+resource "aws_iam_role_policy" "eventbridge_invoke_lambda" {
+  count = var.scheduler_enabled ? 1 : 0
+  name  = "InvokeLambdaPolicy"
+  role  = aws_iam_role.eventbridge_role[0].id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "lambda:InvokeFunction"
+        ]
+        Resource = aws_lambda_function.scheduler_lambda[0].arn
+      }
+    ]
+  })
+}
