@@ -18,3 +18,27 @@
 *.log
 *.lock
 __pycache__/
+
+# Ignore frontend build output
+/frontend/.next/
+/frontend/out/
+/frontend/node_modules/
+
+# Logs
+/frontend/npm-debug.log*
+/frontend/yarn-debug.log*
+/frontend/yarn-error.log*
+/frontend/pnpm-debug.log*
+
+# Env files
+/frontend/.env
+/frontend/.env.local
+/frontend/.env.*.local
+
+# OS & editor
+.DS_Store
+*.swp
+*.swo
+
+# Vercel
+/frontend/.vercel/
