@@ -1,0 +1,17 @@
+variable "aws_region" {
+  description = "AWS region for deployment"
+  type        = string
+  default     = "eu-west-3"
+}
+
+variable "bedrock_region" {
+  description = "AWS region for Bedrock (may differ from main region)"
+  type        = string
+  default     = "eu-west-3"
+}
+
+variable "bedrock_model_id" {
+  description = "Bedrock model ID to monitor (e.g., amazon.nova-pro-v1:0)"
+  type        = string
+  default     = "eu.amazon.nova-2-lite-v1:0 "
+}
